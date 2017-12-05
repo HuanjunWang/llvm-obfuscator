@@ -30,8 +30,7 @@ namespace llvm {
                 static char ID; // pass identification
                 bool is_flag = false;
                 StringObfuscationPass() : ModulePass(ID) {}
-                StringObfuscationPass(bool flag) : ModulePass(ID)
-                {
+    StringObfuscationPass(bool flag) : ModulePass(ID) {
                     is_flag = flag;
                 }
 
@@ -63,8 +62,10 @@ namespace llvm {
                                 std::string::size_type str_idx = gv->getName().str().find(".str.");
                                 std::string section(gv->getSection());
 
+			if (gv->hasComdat() && gv->getComdat()->getSelectionKind() == Comdat::Any)
+				continue;
                                 // Let's encode the static ones
-                                if (gv->isConstant() && gv->hasInitializer() && str_idx == 0 && section != "llvm.metadata") {
+            if (gv->isConstant() && gv->hasInitializer() && isa<ConstantDataSequential>(gv->getInitializer()) && section != "llvm.metadata" && section.find("__objc_methname") == std::string::npos) {
                                         ++GlobalsEncoded;
                                         //errs() << " is constant";
 
@@ -76,7 +77,7 @@ namespace llvm {
                                                                                   (GlobalVariable*) 0,
                                                                                   gv->getThreadLocalMode(),
                                                                                   gv->getType()->getAddressSpace());
-                                        dynGV->copyAttributesFrom(gv);
+                // dynGV->copyAttributesFrom(gv);
                                         dynGV->setInitializer(gv->getInitializer());
 
                                         Constant *initializer = gv->getInitializer();
@@ -171,8 +172,18 @@ namespace llvm {
                                 Constant *init = gvar->getInitializer();
                                 ConstantDataSequential *cdata = dyn_cast<ConstantDataSequential>(init);
 
-                                unsigned len = cdata->getNumElements()*cdata->getElementByteSize();
+            unsigned len = cdata->getNumElements();//*cdata->getElementByteSize();
 
+            ConstantInt* const_key;
+            if (cdata->getElementByteSize() == 2) {
+                uint16_t wkey = key;
+                wkey &= 0xff;
+                wkey = wkey << 8;
+                wkey += key;
+                const_key = ConstantInt::get(mod->getContext(), APInt(16, wkey));
+            } else {
+                const_key = ConstantInt::get(mod->getContext(), APInt(8, key));
+            }
                                 // Add per-GV local decode code:
                                 // for len(globVar): globVar[i] = globVar[i]^key
 
@@ -200,9 +211,9 @@ namespace llvm {
                           Instruction* ptr_arrayidx = GetElementPtrInst::Create(NULL, gvar, ref_ptr_32_indices, "arrayidx", label_for_body);
                                 // Load
                                 LoadInst* int8_20 = new LoadInst(ptr_arrayidx, "", false, label_for_body);
-                                int8_20->setAlignment(1);
+
+            int8_20->setAlignment(cdata->getElementByteSize());
                                 // Decode
-                                ConstantInt* const_key = ConstantInt::get(mod->getContext(), APInt(8, key));
                                 //BinaryOperator* int8_dec = BinaryOperator::Create(Instruction::Add, int8_20, const_key, "sub", label_for_body);
                                 BinaryOperator* int8_dec = BinaryOperator::Create(Instruction::Xor, int8_20, const_key, "xor", label_for_body);
                                 // Store
@@ -216,7 +227,8 @@ namespace llvm {
                                 BranchInst::Create(label_for_end, label_for_body, int1_cmp, label_for_body);
 
                           // Resolve Forward References
-                          fwdref_18->replaceAllUsesWith(int32_inc); delete fwdref_18;
+            fwdref_18->replaceAllUsesWith(int32_inc);
+            delete fwdref_18;
 
                                 // adjust for next iteration
                                 label_entry = label_for_end;

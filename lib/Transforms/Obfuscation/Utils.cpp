@@ -20,7 +20,7 @@ void fixStack(Function *f) {
   // Try to remove phi node and demote reg to stack
   std::vector<PHINode *> tmpPhi;
   std::vector<Instruction *> tmpReg;
-  BasicBlock *bbEntry = &*f->begin();
+  BasicBlock *bbEntry = &*(f->begin());
 
   do {
     tmpPhi.clear();
