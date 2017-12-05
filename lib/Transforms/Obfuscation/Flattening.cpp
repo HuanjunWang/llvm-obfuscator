@@ -22,13 +22,26 @@ using namespace llvm;
 // Stats
 STATISTIC(Flattened, "Functions flattened");
 
+static cl::opt<string> FunctionName(
+    "funcFLA", cl::init(""),
+    cl::desc(
+        "Flatten only certain functions: -mllvm -funcFLA=\"func1,func2\""));
+static cl::opt<int> Percentage(
+    "perFLA", cl::init(100),
+    cl::desc("Flatten only a certain percentage of functions"));
 namespace {
 struct Flattening : public FunctionPass {
   static char ID;  // Pass identification, replacement for typeid
   bool flag;
 
   Flattening() : FunctionPass(ID) {}
-  Flattening(bool flag) : FunctionPass(ID) { this->flag = flag; }
+  Flattening(bool flag) : FunctionPass(ID) { 
+    this->flag = flag;
+    if ( !((Percentage > 0) && (Percentage <= 100)) ) {
+      LLVMContext ctx;
+      ctx.emitError(Twine ("Flattening application function percentage -perFLA=x must be 0 < x <= 100"));
+    } 
+  }
 
   bool runOnFunction(Function &F);
   bool flatten(Function *f);
@@ -42,7 +55,7 @@ Pass *llvm::createFlattening(bool flag) { return new Flattening(flag); }
 bool Flattening::runOnFunction(Function &F) {
   Function *tmp = &F;
   // Do we obfuscate
-  if (toObfuscate(flag, tmp, "fla")) {
+  if (toObfuscate(flag, tmp, "fla") && ((int)llvm::cryptoutils->get_range(100) <= Percentage)) {
     if (flatten(tmp)) {
       ++Flattened;
     }
@@ -99,11 +112,10 @@ bool Flattening::flatten(Function *f) {
 
   if ((br != NULL && br->isConditional()) ||
       insert->getTerminator()->getNumSuccessors() > 1) {
-    BasicBlock::iterator i = insert->end();
-	--i;
+    BasicBlock::iterator i = insert->back().getIterator();
 
     if (insert->size() > 1) {
-      --i;
+      i--;
     }
 
     BasicBlock *tmpBB = insert->splitBasicBlock(i, "first");
@@ -139,13 +151,13 @@ bool Flattening::flatten(Function *f) {
   BranchInst::Create(loopEnd, swDefault);
 
   // Create switch instruction itself and set condition
-  switchI = SwitchInst::Create(&*f->begin(), swDefault, 0, loopEntry);
+  switchI = SwitchInst::Create(&*(f->begin()), swDefault, 0, loopEntry);
   switchI->setCondition(load);
 
   // Remove branch jump from 1st BB and make a jump to the while
   f->begin()->getTerminator()->eraseFromParent();
 
-  BranchInst::Create(loopEntry, &*f->begin());
+  BranchInst::Create(loopEntry, &*(f->begin()));
 
   // Put all BB in the switch
   for (vector<BasicBlock *>::iterator b = origBB.begin(); b != origBB.end();
