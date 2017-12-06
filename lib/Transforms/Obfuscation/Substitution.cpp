@@ -1,17 +1,3 @@
-//===- Substitution.cpp - Substitution Obfuscation
-// pass-------------------------===//
-//
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
-//===----------------------------------------------------------------------===//
-//
-// This file implements operators substitution's pass
-//
-//===----------------------------------------------------------------------===//
-
 #include "llvm/Transforms/Obfuscation/Substitution.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/raw_ostream.h"
@@ -27,10 +13,23 @@
 #define NUMBER_XOR_SUBST 2
 
 static cl::opt<int>
-ObfTimes("sub_loop",
+ObfTimes("sub-loop",
          cl::desc("Choose how many time the -sub pass loops on a function"),
          cl::value_desc("number of times"), cl::init(1), cl::Optional);
 
+/*
+static cl::opt<string> FunctionName(
+    "funcSUB", cl::init(""),
+    cl::desc(
+        "Substitute only certain functions: -mllvm -funcSUB=\"func1,func2\""));
+*/
+
+/*
+static cl::opt<int>
+Percentage("perSUB", cl::init(100),
+           cl::desc("Substitute only a certain percentage [%] "
+                    "of functions: -mllvm -perSUB=10"));
+*/
 
 // Stats
 STATISTIC(Add, "Add substitued");
@@ -54,9 +53,34 @@ struct Substitution : public FunctionPass {
   void (Substitution::*funcXor[NUMBER_XOR_SUBST])(BinaryOperator *bo);
   bool flag;
 
-  Substitution() : FunctionPass(ID) {}
+  Substitution() : FunctionPass(ID) {
+    funcAdd[0] = &Substitution::addNeg;
+    funcAdd[1] = &Substitution::addDoubleNeg;
+    funcAdd[2] = &Substitution::addRand;
+    funcAdd[3] = &Substitution::addRand2;
+
+    funcSub[0] = &Substitution::subNeg;
+    funcSub[1] = &Substitution::subRand;
+    funcSub[2] = &Substitution::subRand2;
+
+    funcAnd[0] = &Substitution::andSubstitution;
+    funcAnd[1] = &Substitution::andSubstitutionRand;
+
+    funcOr[0] = &Substitution::orSubstitution;
+    funcOr[1] = &Substitution::orSubstitutionRand;
+
+    funcXor[0] = &Substitution::xorSubstitution;
+    funcXor[1] = &Substitution::xorSubstitutionRand;
+  }
 
   Substitution(bool flag) : FunctionPass(ID) {
+    // Check if the percentage is correct
+    if (ObfTimes <= 0) {
+      LLVMContext ctx;
+      ctx.emitError(
+          Twine("Substitution application number -sub-loop=x must be x > 0"));
+    }
+
     this->flag = flag;
     funcAdd[0] = &Substitution::addNeg;
     funcAdd[1] = &Substitution::addDoubleNeg;
@@ -105,31 +129,45 @@ static RegisterPass<Substitution> X("substitution", "operators substitution");
 Pass *llvm::createSubstitution(bool flag) { return new Substitution(flag); }
 
 bool Substitution::runOnFunction(Function &F) {
-   // Check if the percentage is correct
-   if (ObfTimes <= 0) {
-     errs()<<"Substitution application number -sub_loop=x must be x > 0";
-	 return false;
-   }
-
   Function *tmp = &F;
-  // Do we obfuscate
+
+  if(F.getName().find(".datadiv_do_decode") != std::string::npos)
+    return false;
+  if(F.getName().find(".datadiv_decode") != std::string::npos)
+    return false;
+  unsigned original = 0;
+  for(auto B = F.begin(); B != F.end(); B++)
+    for(auto I = B->begin(); I != B->end(); I++)
+      original++;
   if (toObfuscate(flag, tmp, "sub")) {
     substitute(tmp);
-	return true;
-  }
 
+  unsigned now = 0;
+  for(auto B = F.begin(); B != F.end(); B++)
+    for(auto I = B->begin(); I != B->end(); I++)
+      now++;
+  //errs() << original << " " << now << " sub\n";
+  }
   return false;
 }
 
 bool Substitution::substitute(Function *f) {
   Function *tmp = f;
-
   // Loop for the number of time we run the pass on the function
   int times = ObfTimes;
   do {
     for (Function::iterator bb = tmp->begin(); bb != tmp->end(); ++bb) {
       for (BasicBlock::iterator inst = bb->begin(); inst != bb->end(); ++inst) {
         if (inst->isBinaryOp()) {
+          bool is_break = false;
+          for(User* uu : inst->users()) 
+            if(isa<CastInst>(uu))
+            {
+              is_break = true;
+              break;
+            }
+          if(is_break)
+            continue;
           switch (inst->getOpcode()) {
           case BinaryOperator::Add:
             // case BinaryOperator::FAdd:
@@ -204,15 +242,15 @@ void Substitution::addNeg(BinaryOperator *bo) {
         BinaryOperator::Create(Instruction::Sub, bo->getOperand(0), op, "", bo);
 
     // Check signed wrap
-    //op->setHasNoSignedWrap(bo->hasNoSignedWrap());
-    //op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
-
-    bo->replaceAllUsesWith(op);
-  }/* else {
+    op->setHasNoSignedWrap(bo->hasNoSignedWrap());
+    op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
+  } else {
     op = BinaryOperator::CreateFNeg(bo->getOperand(1), "", bo);
     op = BinaryOperator::Create(Instruction::FSub, bo->getOperand(0), op, "",
                                 bo);
-  }*/
+  }
+
+  bo->replaceAllUsesWith(op);
 }
 
 // Implementation of a = -(-b + (-c))
@@ -226,8 +264,8 @@ void Substitution::addDoubleNeg(BinaryOperator *bo) {
     op = BinaryOperator::CreateNeg(op, "", bo);
 
     // Check signed wrap
-    //op->setHasNoSignedWrap(bo->hasNoSignedWrap());
-    //op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
+    op->setHasNoSignedWrap(bo->hasNoSignedWrap());
+    op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
   } else {
     op = BinaryOperator::CreateFNeg(bo->getOperand(0), "", bo);
     op2 = BinaryOperator::CreateFNeg(bo->getOperand(1), "", bo);
@@ -253,8 +291,8 @@ void Substitution::addRand(BinaryOperator *bo) {
     op = BinaryOperator::Create(Instruction::Sub, op, co, "", bo);
 
     // Check signed wrap
-    //op->setHasNoSignedWrap(bo->hasNoSignedWrap());
-    //op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
+    op->setHasNoSignedWrap(bo->hasNoSignedWrap());
+    op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
 
     bo->replaceAllUsesWith(op);
   }
@@ -283,8 +321,8 @@ void Substitution::addRand2(BinaryOperator *bo) {
     op = BinaryOperator::Create(Instruction::Add, op, co, "", bo);
 
     // Check signed wrap
-    //op->setHasNoSignedWrap(bo->hasNoSignedWrap());
-    //op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
+    op->setHasNoSignedWrap(bo->hasNoSignedWrap());
+    op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
 
     bo->replaceAllUsesWith(op);
   }
@@ -308,8 +346,8 @@ void Substitution::subNeg(BinaryOperator *bo) {
         BinaryOperator::Create(Instruction::Add, bo->getOperand(0), op, "", bo);
 
     // Check signed wrap
-    //op->setHasNoSignedWrap(bo->hasNoSignedWrap());
-    //op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
+    op->setHasNoSignedWrap(bo->hasNoSignedWrap());
+    op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
   } else {
     op = BinaryOperator::CreateFNeg(bo->getOperand(1), "", bo);
     op = BinaryOperator::Create(Instruction::FAdd, bo->getOperand(0), op, "",
@@ -334,8 +372,8 @@ void Substitution::subRand(BinaryOperator *bo) {
     op = BinaryOperator::Create(Instruction::Sub, op, co, "", bo);
 
     // Check signed wrap
-    //op->setHasNoSignedWrap(bo->hasNoSignedWrap());
-    //op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
+    op->setHasNoSignedWrap(bo->hasNoSignedWrap());
+    op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
 
     bo->replaceAllUsesWith(op);
   }
@@ -364,8 +402,8 @@ void Substitution::subRand2(BinaryOperator *bo) {
     op = BinaryOperator::Create(Instruction::Add, op, co, "", bo);
 
     // Check signed wrap
-    //op->setHasNoSignedWrap(bo->hasNoSignedWrap());
-    //op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
+    op->setHasNoSignedWrap(bo->hasNoSignedWrap());
+    op->setHasNoUnsignedWrap(bo->hasNoUnsignedWrap());
 
     bo->replaceAllUsesWith(op);
   }

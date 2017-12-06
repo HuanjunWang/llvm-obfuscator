@@ -1,16 +1,3 @@
-//===- Flattening.cpp - Flattening Obfuscation pass------------------------===//
-//
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
-//
-//===----------------------------------------------------------------------===//
-//
-// This file implements the flattening pass
-//
-//===----------------------------------------------------------------------===//
-
 #include "llvm/Transforms/Obfuscation/Flattening.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/CryptoUtils.h"
@@ -26,9 +13,11 @@ static cl::opt<string> FunctionName(
     "funcFLA", cl::init(""),
     cl::desc(
         "Flatten only certain functions: -mllvm -funcFLA=\"func1,func2\""));
+
 static cl::opt<int> Percentage(
     "perFLA", cl::init(100),
     cl::desc("Flatten only a certain percentage of functions"));
+
 namespace {
 struct Flattening : public FunctionPass {
   static char ID;  // Pass identification, replacement for typeid
@@ -37,6 +26,7 @@ struct Flattening : public FunctionPass {
   Flattening() : FunctionPass(ID) {}
   Flattening(bool flag) : FunctionPass(ID) { 
     this->flag = flag;
+    // Check if the number of applications is correct
     if ( !((Percentage > 0) && (Percentage <= 100)) ) {
       LLVMContext ctx;
       ctx.emitError(Twine ("Flattening application function percentage -perFLA=x must be 0 < x <= 100"));
@@ -54,8 +44,10 @@ Pass *llvm::createFlattening(bool flag) { return new Flattening(flag); }
 
 bool Flattening::runOnFunction(Function &F) {
   Function *tmp = &F;
+
   // Do we obfuscate
   if (toObfuscate(flag, tmp, "fla") && ((int)llvm::cryptoutils->get_range(100) <= Percentage)) {
+    //errs() << "fla " + F.getName() +"\n";
     if (flatten(tmp)) {
       ++Flattened;
     }
