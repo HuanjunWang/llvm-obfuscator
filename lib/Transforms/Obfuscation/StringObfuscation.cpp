@@ -38,7 +38,7 @@ public:
     virtual bool runOnModule(Module &M) {
         if(!is_flag)
             return false;
-		errs() << "String Obfuscation"<<"\n";
+		//errs() << "String Obfuscation"<<"\n";
         std::vector<GlobalVariable*> toDelConstGlob;
         //std::vector<GlobalVariable*> encGlob;
         std::vector<encVar*> encGlob;
@@ -72,9 +72,9 @@ public:
                     const char *orig = cdata->getRawDataValues().data();
                     unsigned int len = cdata->getNumElements()*cdata->getElementByteSize();
 					
-					errs() << "Global var " << gv->getName()<<"\n";
+					//errs() << "Global var " << gv->getName()<<"\n";
 
-					errs() << len <<"\n";
+					//errs() << len <<"\n";
                     encVar *cur = new encVar();
                     cur->var = dynGV;
                     cur->key = llvm::cryptoutils->get_uint8_t();
